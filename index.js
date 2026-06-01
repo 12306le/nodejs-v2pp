@@ -11,6 +11,7 @@ const PROJECT_URL = process.env.PROJECT_URL || '';    // 需要上传订阅或�
 const AUTO_ACCESS = process.env.AUTO_ACCESS || false; // false关闭自动保活，true开启,需同时填写PROJECT_URL变量
 const FILE_PATH = process.env.FILE_PATH || '.tmp';   // 运行目录,sub节点文件保存目录
 const SUB_PATH = process.env.SUB_PATH || 'sub';       // 订阅路径
+const SUB_PASSWORD = process.env.SUB_PASSWORD || '';  // Subscription password. Empty means public.
 const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;        // http服务订阅端口
 const UUID = process.env.UUID || '9afd1229-b893-40c1-84dd-51e7ce204913'; // 使用哪吒v1,在不同的平台运行需修改UUID,否则会覆盖
 const NEZHA_SERVER = process.env.NEZHA_SERVER || '';        // 哪吒v1填写形式: nz.abc.com:8008  哪吒v0填写形式：nz.abc.com
@@ -54,6 +55,18 @@ let subPath = path.join(FILE_PATH, 'sub.txt');
 let listPath = path.join(FILE_PATH, 'list.txt');
 let bootLogPath = path.join(FILE_PATH, 'boot.log');
 let configPath = path.join(FILE_PATH, 'config.json');
+
+function canAccessSubscription(req) {
+  if (!SUB_PASSWORD) return true;
+  const password = req.query.pwd || req.get('x-sub-password') || '';
+  return password === SUB_PASSWORD;
+}
+
+function buildSubscriptionUrl() {
+  const baseUrl = `${PROJECT_URL}/${SUB_PATH}`;
+  if (!SUB_PASSWORD) return baseUrl;
+  return `${baseUrl}?pwd=${encodeURIComponent(SUB_PASSWORD)}`;
+}
 
 // 如果订阅器上存在历史运行节点则先删除
 function deleteNodes() {
@@ -468,14 +481,15 @@ vmess://${Buffer.from(JSON.stringify(VMESS)).toString('base64')}
 
 trojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=%2Ftrojan-argo%3Fed%3D2560#${nodeName}
     `;
-      // 打印 sub.txt 内容到控制台
-      console.log(Buffer.from(subTxt).toString('base64'));
-      fs.writeFileSync(subPath, Buffer.from(subTxt).toString('base64'));
+      const encodedContent = Buffer.from(subTxt).toString('base64');
+      fs.writeFileSync(subPath, encodedContent);
       console.log(`${FILE_PATH}/sub.txt saved successfully`);
       uploadNodes();
       // 将内容进行 base64 编码并写入 SUB_PATH 路由
       app.get(`/${SUB_PATH}`, (req, res) => {
-        const encodedContent = Buffer.from(subTxt).toString('base64');
+        if (!canAccessSubscription(req)) {
+          return res.status(404).send('Not found');
+        }
         res.set('Content-Type', 'text/plain; charset=utf-8');
         res.send(encodedContent);
       });
@@ -488,7 +502,7 @@ trojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${argoDomain}&fp=firefox&typ
 // 自动上传节点或订阅
 async function uploadNodes() {
   if (UPLOAD_URL && PROJECT_URL) {
-    const subscriptionUrl = `${PROJECT_URL}/${SUB_PATH}`;
+    const subscriptionUrl = buildSubscriptionUrl();
     const jsonData = {
       subscription: [subscriptionUrl]
     };
